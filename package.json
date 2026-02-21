@@ -1,0 +1,32 @@
+{
+  "name": "@k1e1n04/k-ui-mcp-server",
+  "version": "1.0.0",
+  "description": "k-uiコンポーネントライブラリの情報を提供するMCPサーバー",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "k-ui-mcp-server": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/k1e1n04/k-ui-mcp-server.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3",
+    "zod": "^3.25.67"
+  }
+}
