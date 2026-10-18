@@ -2,7 +2,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,7 +18,69 @@ import type {
   ValidationWarning,
 } from "./types.js";
 
+/** import名として許可する識別子（RegExp組み立て時のインジェクション・ReDoS対策） */
+const IDENTIFIER_PATTERN = /^[A-Za-z_$][\w$]*$/;
+/** 識別子の最大長 */
+const MAX_IDENTIFIER_LENGTH = 128;
+/** import名の最大件数 */
+const MAX_IMPORT_NAMES = 100;
+
+/**
+ * importされた名前が正規の識別子かどうかを検証する
+ */
+function isValidIdentifier(name: string): boolean {
+  return name.length <= MAX_IDENTIFIER_LENGTH && IDENTIFIER_PATTERN.test(name);
+}
+
 const K_UI_REPO = "https://github.com/k1e1n04/k-ui.git";
+const DEFAULT_VERSION = "main";
+/** gitのブランチ・タグとして許可する文字種（コマンド引数汚染の防止） */
+const VERSION_PATTERN = /^[A-Za-z0-9._/-]+$/;
+/** cloneキャッシュのルートディレクトリ */
+const CACHE_ROOT = path.join(os.homedir(), ".cache", "k-ui-mcp-server");
+
+/**
+ * K_UI_VERSION環境変数を検証する
+ * allowlistに一致しない場合はデフォルト（main）にフォールバックする
+ */
+function resolveVersion(): string {
+  const version = process.env.K_UI_VERSION;
+  if (!version || !VERSION_PATTERN.test(version)) {
+    return DEFAULT_VERSION;
+  }
+  return version;
+}
+
+/**
+ * 指定パスがキャッシュディレクトリ配下に収まっていることを検証する
+ * （`..` などによるパストラバーサルの防止）。範囲外ならnullを返す
+ */
+function resolveWithinCache(dir: string): string | null {
+  const resolved = path.resolve(dir);
+  const root = path.resolve(CACHE_ROOT);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    return null;
+  }
+  return resolved;
+}
+
+/**
+ * K_UI_PATH環境変数を解決する
+ * シンボリックリンクを解決した実パスが、k-uiのソースツリー
+ * （src/componentsを保有するディレクトリ）である場合のみ許可する
+ */
+function resolveEnvPath(envPath: string): string | null {
+  let realPath: string;
+  try {
+    realPath = fs.realpathSync(envPath);
+  } catch {
+    return null;
+  }
+  if (!fs.statSync(realPath).isDirectory()) return null;
+  // k-uiのソースツリー以外（シンボリックリンク経由の任意ディレクトリ）を弾く
+  if (!fs.existsSync(path.join(realPath, "src", "components"))) return null;
+  return realPath;
+}
 
 /**
  * k-uiのソースパスを解決する
@@ -27,22 +89,35 @@ const K_UI_REPO = "https://github.com/k1e1n04/k-ui.git";
  */
 function resolveKuiPath(): string {
   if (process.env.K_UI_PATH) {
-    return process.env.K_UI_PATH;
+    const envPath = resolveEnvPath(process.env.K_UI_PATH);
+    if (envPath) return envPath;
+    console.error(
+      "K_UI_PATH が k-ui のソースツリーを指していないため、GitHub から取得します"
+    );
   }
 
-  const version = process.env.K_UI_VERSION ?? "main";
-  const cacheDir = path.join(os.homedir(), ".cache", "k-ui-mcp-server");
+  const requestedVersion = resolveVersion();
   // バージョンごとにディレクトリを分ける
-  const repoDir = path.join(cacheDir, `k-ui-${version}`);
+  // `..` などでキャッシュ外へ出る場合は main にフォールバックする
+  const version =
+    resolveWithinCache(path.join(CACHE_ROOT, `k-ui-${requestedVersion}`)) !==
+    null
+      ? requestedVersion
+      : DEFAULT_VERSION;
+  const repoDir = resolveWithinCache(path.join(CACHE_ROOT, `k-ui-${version}`));
+  if (!repoDir) {
+    throw new Error("k-uiのキャッシュディレクトリを解決できませんでした");
+  }
 
   if (fs.existsSync(path.join(repoDir, "src"))) {
     // 既にclone済み → fetchして指定バージョンに更新
     try {
-      execSync(`git fetch --depth 1 --quiet origin ${version}`, {
-        cwd: repoDir,
-        stdio: "ignore",
-      });
-      execSync("git checkout --quiet FETCH_HEAD", {
+      execFileSync(
+        "git",
+        ["fetch", "--depth", "1", "--quiet", "origin", "--", version],
+        { cwd: repoDir, stdio: "ignore" }
+      );
+      execFileSync("git", ["checkout", "--quiet", "FETCH_HEAD"], {
         cwd: repoDir,
         stdio: "ignore",
       });
@@ -51,9 +126,20 @@ function resolveKuiPath(): string {
     }
   } else {
     // 初回clone
-    fs.mkdirSync(cacheDir, { recursive: true });
-    execSync(
-      `git clone --depth 1 --branch ${version} --quiet ${K_UI_REPO} "${repoDir}"`,
+    fs.mkdirSync(CACHE_ROOT, { recursive: true });
+    execFileSync(
+      "git",
+      [
+        "clone",
+        "--depth",
+        "1",
+        "--branch",
+        version,
+        "--quiet",
+        "--",
+        K_UI_REPO,
+        repoDir,
+      ],
       { stdio: "ignore" }
     );
   }
@@ -195,8 +281,12 @@ server.tool(
     while ((importMatch = importPattern.exec(code)) !== null) {
       const names = importMatch[1].split(",").map((n) => n.trim());
       importedNames.push(
-        ...names.filter((n) => !n.startsWith("type ") && n.length > 0)
+        ...names.filter(
+          (n) =>
+            n.length > 0 && !n.startsWith("type ") && isValidIdentifier(n)
+        )
       );
+      if (importedNames.length >= MAX_IMPORT_NAMES) break;
     }
 
     if (importedNames.length === 0) {

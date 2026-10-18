@@ -13,11 +13,15 @@
   "mcpServers": {
     "k-ui": {
       "command": "npx",
-      "args": ["-y", "github:k1e1n04/k-ui-mcp-server"]
+      "args": ["-y", "@k1e1n04/k-ui-mcp-server@1.0.0"]
     }
   }
 }
 ```
+
+> 実行するバージョンは `@k1e1n04/k-ui-mcp-server@1.0.0` のように固定してください。
+> バージョンを固定せず `github:` 参照やレンジ指定でインストールすると、改ざんされた
+> パッケージを実行するサプライチェーンリスクがあります。
 
 ローカルの k-ui ソースを参照する場合は `K_UI_PATH` を指定:
 
@@ -26,7 +30,7 @@
   "mcpServers": {
     "k-ui": {
       "command": "npx",
-      "args": ["-y", "github:k1e1n04/k-ui-mcp-server"],
+      "args": ["-y", "@k1e1n04/k-ui-mcp-server@1.0.0"],
       "env": {
         "K_UI_PATH": "/path/to/k-ui"
       }
@@ -46,7 +50,7 @@
   "mcpServers": {
     "k-ui": {
       "command": "npx",
-      "args": ["-y", "github:k1e1n04/k-ui-mcp-server"],
+      "args": ["-y", "@k1e1n04/k-ui-mcp-server@1.0.0"],
       "env": {
         "K_UI_VERSION": "v1.2.0"
       }
@@ -56,6 +60,10 @@
 ```
 
 バージョンごとにキャッシュが分かれるため、複数バージョンの切り替えも可能です。
+
+`K_UI_VERSION` にはブランチ名・タグに加えて **コミット SHA を指定することを推奨**します。
+ブランチやタグは後から書き換えられる可能性があるため、再現性と改ざん耐性のため
+`K_UI_VERSION: "0d409d3..."` のように不変なコミット SHA を固定してください。
 
 ## ツール
 
@@ -69,6 +77,6 @@
 ## 開発
 
 ```bash
-npm install
-npm run build
+pnpm install
+pnpm build
 ```
